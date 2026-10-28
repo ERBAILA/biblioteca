@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Biblioteca del barrio</title>
+<style>
+:root{--bg:#eef2f1;--ink:#1f2a37;--card:#fff;--acc:#0f5c63;--line:#c7d3d1;--bad:#a3281f;--ok:#1b6b3a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Georgia,"Times New Roman",serif}
+header{background:var(--acc);color:#fff;padding:18px 20px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+h1{margin:0;font-size:1.5rem;letter-spacing:.01em}
+main{max-width:1000px;margin:0 auto;padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:760px){main{grid-template-columns:1fr}}
+section{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:14px 16px}
+h2{margin:0 0 8px;font-size:1.1rem}
+input,select,button{font:inherit;padding:6px 10px;border:1px solid var(--line);border-radius:3px;background:#fff;color:var(--ink)}
+button{background:var(--acc);color:#fff;border-color:var(--acc);cursor:pointer}
+button.sec{background:#fff;color:var(--acc)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #f2b705;outline-offset:1px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}.row input{flex:1;min-width:140px}
+ul{list-style:none;margin:0;padding:0}
+li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
+li small{display:block;color:#51606f}
+.late{color:var(--bad);font-weight:bold}
+#msg{grid-column:1/-1;min-height:3em;padding:10px 14px;border-left:5px solid var(--acc);background:#fff}
+#msg.err{border-color:var(--bad)}#msg.ok{border-color:var(--ok)}
+.wide{grid-column:1/-1}
+</style></head><body>
+<header><h1>Biblioteca del barrio</h1>
+<div class="row" style="margin:0;align-items:center"><span id="fecha"></span>
+<button class="sec" data-dias="1">+1 día</button><button class="sec" data-dias="8">+8 días</button></div></header>
+<main>
+<div id="msg" role="status" aria-live="polite">Elige un socio activo para empezar.</div>
+<section class="wide"><h2>Socio activo</h2>
+<div class="row"><select id="socio" aria-label="Socio activo"></select>
+<input id="nuevo" placeholder="Nombre del nuevo socio" aria-label="Nombre del nuevo socio"><button id="alta">Dar de alta</button></div>
+<div id="estado"></div></section>
+<section><h2>Buscar libro</h2>
+<div class="row"><input id="q" placeholder="Título" aria-label="Título"><button id="buscar">Buscar</button></div>
+<ul id="libros"></ul></section>
+<section><h2>Préstamos del socio</h2><ul id="mios"></ul>
+<h2 style="margin-top:14px">Reservas</h2><ul id="reservas"></ul></section>
+</main>
+<script>
+const KEY="biblioteca-v1",MAX=2,DIAS=7;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt=d=>new Date(d*864e5).toLocaleDateString("es-ES",{timeZone:"UTC"});
+function semilla(){let n=1;const L=[["Don Quijote de la Mancha","Cervantes",3],["Cien años de soledad","García Márquez",2],["La sombra del viento","Ruiz Zafón",1],["Rimas y leyendas","Bécquer",2]];
+ return{libros:L.map((l,i)=>({id:i+1,titulo:l[0],autor:l[1],ej:Array.from({length:l[2]},()=>({id:n++,p:false}))})),socios:[],prestamos:[],reservas:[],offset:0,seq:100}}
+let S;try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){}S=S||semilla();
+const guardar=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
+const id=()=>S.seq++;
+
+class Catalogo{ // misma API pública que catalogo.py
+ constructor(l){this._l=l}
+ buscar(t){t=t.trim().toLowerCase();return this._l.filter(l=>l.titulo.toLowerCase().includes(t)).map(l=>this._v(l))}
+ obtener(i){const l=this._l.find(x=>x.id===i);return l?this._v(l):null}
+ marcarPrestado(i){const l=this._l.find(x=>x.id===i),e=l&&l.ej.find(e=>!e.p);if(!e)return null;e.p=true;return e.id}
+ marcarDevuelto(eid){for(const l of this._l){const e=l.ej.find(e=>e.id===eid);if(e){e.p=false;return l.id}}return null}
+ _v(l){return{id:l.id,titulo:l.titulo,autor:l.autor,total:l.ej.length,disponibles:l.ej.filter(e=>!e.p).length}}}
+class Socios{
+ constructor(s){this._s=s}
+ alta(n){n=n.trim();if(!n)throw"El nombre no puede estar vacío.";const s={id:id(),nombre:n,hasta:null};this._s.push(s);return s.id}
+ obtener(i){const s=this._s.find(x=>x.id===i);return s?{id:s.id,nombre:s.nombre,sancionadoHasta:s.hasta}:null}
+ sancionar(i,h){const s=this._s.find(x=>x.id===i);if(!s.hasta||h>s.hasta)s.hasta=h}
+ estaSancionado(i,hoy){const s=this._s.find(x=>x.id===i);return !!(s&&s.hasta&&s.hasta>=hoy)}}
+class Prestamos{
+ constructor(cat,soc){this.cat=cat;this.soc=soc}
+ hoy(){return Math.floor(Date.now()/864e5)+S.offset}
+ activosDe(s){return S.prestamos.filter(p=>p.socio===s&&p.dev===null)}
+ _validar(s){if(!this.soc.obtener(s))throw"Elige un socio.";if(this.soc.estaSancionado(s,this.hoy()))throw"El socio está sancionado y no puede pedir libros."}
+ prestar(s,l){this._validar(s);if(!this.cat.obtener(l))throw"El libro no existe.";const a=this.activosDe(s);
+  if(a.length>=MAX)throw`Un socio no puede tener más de ${MAX} libros a la vez.`;
+  if(a.some(p=>p.libro===l))throw"El socio ya tiene un ejemplar de ese título.";
+  const e=this.cat.marcarPrestado(l);if(e===null)throw"No quedan ejemplares libres. Puedes reservarlo.";
+  const h=this.hoy(),p={id:id(),socio:s,libro:l,ej:e,desde:h,vence:h+DIAS,dev:null};S.prestamos.push(p);return p}
+ reservar(s,l){this._validar(s);const L=this.cat.obtener(l);if(L.disponibles>0)throw"Hay ejemplares libres: pídelo prestado directamente.";
+  if(S.reservas.some(r=>r.socio===s&&r.libro===l))throw"Ya tienes una reserva de ese título.";S.reservas.push({socio:s,libro:l})}
+ devolver(pid){const p=S.prestamos.find(x=>x.id===pid);if(!p||p.dev!==null)throw"Ese préstamo no existe o ya está devuelto.";
+  const h=this.hoy();p.dev=h;this.cat.marcarDevuelto(p.ej);let sancion=null;
+  if(h>p.vence){sancion=h+(h-p.vence);this.soc.sancionar(p.socio,sancion)}
+  return{sancion,asignado:this._atender(p.libro)}}
+ _atender(l){for(const r of S.reservas.filter(r=>r.libro===l)){S.reservas.splice(S.reservas.indexOf(r),1);
+  try{return this.prestar(r.socio,l)}catch(e){}}return null}}
+
+const cat=new Catalogo(S.libros),soc=new Socios(S.socios),pre=new Prestamos(cat,soc);
+const $=x=>document.getElementById(x);let activo=null,consulta="";
+const nombre=i=>(soc.obtener(i)||{}).nombre||"?";
+function aviso(t,tipo){const m=$("msg");m.textContent=t;m.className=tipo||""}
+function accion(f,okTxt){try{const r=f();guardar();aviso(typeof okTxt==="function"?okTxt(r):okTxt,"ok")}catch(e){aviso(String(e),"err")}pintar()}
+function pintar(){
+ $("fecha").textContent="Hoy: "+fmt(pre.hoy());
+ $("socio").innerHTML=S.socios.length?S.socios.map(s=>`<option value="${s.id}"${s.id===activo?" selected":""}>${esc(s.nombre)}</option>`).join(""):"<option value=''>Sin socios: da de alta uno</option>";
+ activo=S.socios.length?Number($("socio").value):null;
+ const s=activo&&soc.obtener(activo);
+ $("estado").innerHTML=s?(soc.estaSancionado(activo,pre.hoy())?`<span class="late">Sancionado hasta ${fmt(s.sancionadoHasta)}</span>`:"Sin sanciones."):"";
+ $("libros").innerHTML=cat.buscar(consulta).map(l=>`<li><span>${esc(l.titulo)}<small>${esc(l.autor)} · ${l.disponibles} de ${l.total} libres</small></span>
+  <button data-l="${l.id}" data-a="${l.disponibles?"p":"r"}">${l.disponibles?"Pedir":"Reservar"}</button></li>`).join("")||"<li>No hay libros con ese título.</li>";
+ const m=s?pre.activosDe(activo):[];
+ $("mios").innerHTML=m.map(p=>{const tarde=pre.hoy()>p.vence;return`<li><span>${esc(cat.obtener(p.libro).titulo)}<small class="${tarde?"late":""}">${tarde?"Caducó":"Vence"} el ${fmt(p.vence)}</small></span><button class="sec" data-d="${p.id}">Devolver</button></li>`}).join("")||"<li>Sin libros prestados.</li>";
+ $("reservas").innerHTML=S.reservas.map((r,i)=>`<li><span>${esc(cat.obtener(r.libro).titulo)}<small>${esc(nombre(r.socio))} · posición ${S.reservas.filter(x=>x.libro===r.libro).indexOf(r)+1}</small></span></li>`).join("")||"<li>Sin reservas.</li>"}
+$("socio").onchange=()=>{activo=Number($("socio").value);pintar()};
+$("alta").onclick=()=>accion(()=>{const i=soc.alta($("nuevo").value);$("nuevo").value="";activo=i;return i},"Socio dado de alta.");
+$("buscar").onclick=()=>{consulta=$("q").value;pintar()};
+$("q").onkeydown=e=>{if(e.key==="Enter"){consulta=$("q").value;pintar()}};
+$("libros").onclick=e=>{const b=e.target.closest("button");if(!b)return;const l=Number(b.dataset.l);
+ if(b.dataset.a==="p")accion(()=>pre.prestar(activo,l),p=>`Préstamo hecho. Vence el ${fmt(p.vence)}.`);else accion(()=>pre.reservar(activo,l),"Reserva anotada.")};
+$("mios").onclick=e=>{const b=e.target.closest("button");if(!b)return;
+ accion(()=>pre.devolver(Number(b.dataset.d)),r=>"Devuelto."+(r.sancion?` Con retraso: sancionado hasta el ${fmt(r.sancion)}.`:"")+(r.asignado?` Reserva atendida para ${nombre(r.asignado.socio)}.`:""))};
+document.querySelectorAll("[data-dias]").forEach(b=>b.onclick=()=>{S.offset+=Number(b.dataset.dias);guardar();aviso("Fecha simulada avanzada "+b.dataset.dias+" días.");pintar()});
+pintar();
+</script></body></html>
